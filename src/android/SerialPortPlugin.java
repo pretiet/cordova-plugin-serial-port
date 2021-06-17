@@ -23,10 +23,11 @@ import java.util.concurrent.locks.*;
  */
 public class SerialPortPlugin extends CordovaPlugin {
     private SerialPort serialPort;
-    private InputStream inputStream;
-    private OutputStream outputStream;
+    private FileInputStream inputStream;
+    private FileOutputStream outputStream;
     private ReadDataThread readThread;
     private boolean dataModel;
+    private final Object lock = new Object();
 
     @Override
     public boolean execute(String action, JSONArray args, CallbackContext callbackContext) throws JSONException {
@@ -63,6 +64,8 @@ public class SerialPortPlugin extends CordovaPlugin {
 
         return false;
     }
+
+
 
     private void openDevice(String message, CallbackContext callbackContext) {
         JSONArray jsonArray = null;
@@ -116,8 +119,8 @@ public class SerialPortPlugin extends CordovaPlugin {
                 System.out.println("dataModel:" + this.dataModel);
 
                 serialPort = new SerialPort(new File(devName), baudrate, flags);
-                inputStream = serialPort.getInputStream();
-                outputStream = serialPort.getOutputStream();
+                inputStream = serialPort.getFileInputStream();
+                outputStream = serialPort.getFileOutputStream();
                 readThread = new ReadDataThread( "Thread-Read", inputStream, this.dataModel);
                 readThread.start();
                 callbackContext.success("open device success");
@@ -152,24 +155,41 @@ public class SerialPortPlugin extends CordovaPlugin {
     }
 
     private void writeSerialData(String message, CallbackContext callbackContext) {
-        if (message != null && message.length() > 0) {
-            try {
-                byte[] byteArray;
-                if(this.dataModel == true) {
-                    byteArray =FormatUtil.hexString2Bytes(message);
-                } else {
-                    byteArray = message.getBytes();
+      if (message != null && message.length() > 0) {
+          byte[] byteArray;
+          if(this.dataModel == true) {
+            byteArray =FormatUtil.hexString2Bytes(message);
+          } else {
+            byteArray = message.getBytes();
+          }
+
+          try {
+            serialPort = new SerialPort(new File("/dev/ttyS1"), 115200, 0);
+          } catch (IOException e) {
+            e.printStackTrace();
+          }
+          new Thread(new Runnable() {
+            @Override
+            public void run() {
+              if (lock == null) {
+                System.out.println("lock = null");
+              } else {
+                try {
+                  synchronized (lock) {
+                    outputStream = serialPort.getFileOutputStream();
+                    outputStream.write(byteArray);
+                    outputStream.close();
+                    serialPort.close();
+                  }
+                } catch (Exception e) {
+                  e.printStackTrace();
                 }
-                outputStream.write(byteArray);
-                System.out.println("writestr:" + message);
-                callbackContext.success("write data success");
-            } catch (IOException e) {
-                e.printStackTrace();
-                callbackContext.error("write data exception");
+              }
             }
-        } else {
-            callbackContext.error("write data fail");
-        }
+          }).run();
+      } else {
+        callbackContext.error("write data fail");
+      }
     }
 
     private void sendDataAndWaitResponse(String message, int timeout, CallbackContext callbackContext) {
